@@ -648,6 +648,10 @@ function onPointerDown(e) {
     } else if (!didDrag) {
       const t = pickTarget(ev.clientX, ev.clientY);
       if (t.stackIdx >= 0) handleTap(t.cardId, t.stackIdx);
+      else if (selectedCardId !== -1) {
+        selectedCardId = -1;
+        updateSelectionHighlight();
+      }
     }
 
     dragCards.forEach(cid => {
@@ -681,7 +685,9 @@ function handleTap(cardId, stackIdx) {
   if (cardId !== -1 && cardId === lastTapCardId && now - lastTapTime < 400) {
     lastTapCardId = -1;
     const moved = tryAutoPlace(cardId);
-    if (!moved) selectedCardId = cardId;   // keep it selected if it can't go
+    // A successful auto-move must not leave the card selected; an invalid one
+    // stays selected so the player can pick a different destination.
+    selectedCardId = moved ? -1 : cardId;
     updateSelectionHighlight();
     return;
   }
@@ -712,8 +718,8 @@ function handleTap(cardId, stackIdx) {
     selectedCardId = -1;
     updateSelectionHighlight();
   } else {
-    // Invalid move → select the newly clicked card instead (clear on empty).
-    selectedCardId = cardId !== -1 ? cardId : -1;
+    // Invalid move → deselect the pile.
+    selectedCardId = -1;
     updateSelectionHighlight();
   }
 }
@@ -855,6 +861,16 @@ function highlightCard(cardId) {
 // ── Event Listeners ──
 tableauEl.addEventListener('pointerdown', onPointerDown);
 foundationsEl.addEventListener('pointerdown', onPointerDown);
+
+// Clicking the background (felt/header, anywhere that isn't a card or stack)
+// clears the current selection.
+document.addEventListener('pointerdown', (e) => {
+  if (e.target.closest('.card') || e.target.closest('.stack')) return;
+  if (selectedCardId !== -1) {
+    selectedCardId = -1;
+    updateSelectionHighlight();
+  }
+});
 
 document.getElementById('btn-undo').addEventListener('click', undo);
 document.getElementById('btn-new').addEventListener('click', newGame);
