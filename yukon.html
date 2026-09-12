@@ -53,19 +53,26 @@ body {
   margin: 0 auto;
   padding: 16px 8px 32px;
   min-height: calc(100vh - 44px);
+  display: flex;
+  flex-direction: row-reverse; /* foundations (first child) sit on the right */
+  align-items: flex-start;
+  justify-content: center;
+  gap: 16px;
 }
 
 /* Rows */
 #foundations {
   display: flex;
-  justify-content: center;
+  flex-direction: column;
   gap: 10px;
-  margin-bottom: 24px;
+  flex: 0 0 auto;
 }
 #tableau {
   display: flex;
   justify-content: center;
   gap: 10px;
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
 .stack {
@@ -158,14 +165,38 @@ body {
   --sprite-h: 1200px;
 }
 
-@media (max-width: 640px) {
+/* Tablets / small laptops: shrink cards so the 7 tableau columns plus the
+   right-hand foundation column all fit. */
+@media (max-width: 800px) {
   :root {
-    --card-w: 55px;
-    --card-h: 80px;
+    --card-w: 52px;
+    --card-h: 75px;
   }
-  #tableau, #foundations { gap: 4px; }
+  #game { gap: 12px; }
+  #tableau, #foundations { gap: 6px; }
   #header h1 { font-size: 15px; }
   .btn { padding: 5px 10px; font-size: 12px; }
+}
+
+/* Phones: smaller still so all 8 columns (7 tableau + 1 foundation) fit. */
+@media (max-width: 480px) {
+  :root {
+    --card-w: 38px;
+    --card-h: 55px;
+  }
+  #game { gap: 10px; padding: 12px 4px 24px; }
+  #tableau, #foundations { gap: 5px; }
+}
+
+/* Short viewports (phone/tablet in landscape): height is the constraint, so
+   shrink cards enough that the right-hand 4-card foundation column fits. */
+@media (max-height: 480px) {
+  :root {
+    --card-w: 36px;
+    --card-h: 52px;
+  }
+  #game { gap: 10px; padding: 10px 4px 16px; }
+  #tableau, #foundations { gap: 5px; }
 }
 </style>
 </head>
