@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Yukon Solitaire</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #1a6b3c;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Sprite sheets loaded as images, used via background-position */
+.sprite-sheet { display: none; }
+
+#header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: rgba(0,0,0,0.25);
+  color: #fff;
+  font-size: 14px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+#header h1 { font-size: 18px; font-weight: 600; white-space: nowrap; }
+#header .info { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+#header .info span { opacity: 0.9; }
+
+.btn {
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.25);
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+.btn:hover { background: rgba(255,255,255,0.25); }
+
+#game {
+  position: relative;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 16px 8px 32px;
+  min-height: calc(100vh - 44px);
+}
+
+/* Rows */
+#foundations {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+#tableau {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.stack {
+  position: relative;
+  width: var(--card-w);
+  min-height: var(--card-h);
+}
+
+.stack-placeholder {
+  width: 100%;
+  height: var(--card-h);
+  border: 2px dashed rgba(255,255,255,0.3);
+  border-radius: 6px;
+  position: absolute;
+  top: 0; left: 0;
+}
+
+.foundation-stack .stack-placeholder {
+  border-color: rgba(255,255,255,0.4);
+  background: rgba(0,0,0,0.1);
+}
+
+.foundation-stack .stack-placeholder::after {
+  content: '';
+  display: block;
+  width: 36px;
+  height: 36px;
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(255,255,255,0.12);
+  border-radius: 50%;
+}
+
+.card {
+  position: absolute;
+  width: var(--card-w);
+  height: var(--card-h);
+  border-radius: var(--card-r);
+  cursor: pointer;
+  background-size: var(--sprite-w) var(--sprite-h);
+  image-rendering: auto;
+  transition: transform 0.1s ease-out, box-shadow 0.1s ease-out;
+  will-change: transform;
+  z-index: 1;
+  overflow: hidden;
+}
+
+.card.face-down {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.35);
+}
+
+.card.face-up {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+.card.dragging {
+  z-index: 10000 !important;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  transition: none;
+}
+
+.card.highlight {
+  box-shadow: 0 0 0 3px #ffeb3b, 0 4px 12px rgba(0,0,0,0.3);
+  z-index: 5;
+}
+
+/* Win overlay */
+#win-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.75);
+  z-index: 20000;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  color: #fff;
+}
+#win-overlay.show { display: flex; }
+#win-overlay h2 { font-size: 48px; margin-bottom: 16px; text-shadow: 0 2px 8px rgba(0,0,0,0.5); }
+#win-overlay p { font-size: 20px; margin-bottom: 24px; opacity: 0.9; }
+
+/* Responsive */
+:root {
+  --card-w: 80px;
+  --card-h: 115px;
+  --card-r: 5px;
+  --sprite-w: 1729px;
+  --sprite-h: 1200px;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --card-w: 55px;
+    --card-h: 80px;
+  }
+  #tableau, #foundations { gap: 4px; }
+  #header h1 { font-size: 15px; }
+  .btn { padding: 5px 10px; font-size: 12px; }
+}
+</style>
+</head>
+<body>
+
+<!-- Sprite sheets -->
+<img id="spr-fronts" class="sprite-sheet" src="cards_dondorf.png">
+<img id="spr-backs" class="sprite-sheet" src="backgrounds_cards.png">
+
+<div id="header">
+  <h1>Yukon Solitaire</h1>
+  <div class="info">
+    <span>Moves: <strong id="moves">0</strong></span>
+    <span>Score: <strong id="score">0</strong></span>
+    <button class="btn" id="btn-undo" title="Undo (Z)">Undo</button>
+    <button class="btn" id="btn-new" title="New Game (N)">New Game</button>
+    <button class="btn" id="btn-auto" title="Auto Complete">Auto</button>
+  </div>
+</div>
+
+<div id="game">
+  <div id="foundations"></div>
+  <div id="tableau"></div>
+</div>
+
+<div id="win-overlay">
+  <h2>You Win!</h2>
+  <p id="win-stats"></p>
+  <button class="btn" onclick="newGame()" style="font-size:18px; padding:10px 28px;">Play Again</button>
+</div>
+
+<script>
+// ── Constants ──
+// Suit mapping: Android index → { name, spriteRow }
+// Android: 0=clubs(row0), 1=hearts(row2), 2=spades(row3), 3=diamonds(row4)
+const SUITS = [
+  { name: 'clubs',    row: 0, color: 'black' },
+  { name: 'hearts',   row: 2, color: 'red'   },
+  { name: 'spades',   row: 3, color: 'black' },
+  { name: 'diamonds', row: 4, color: 'red'   }
+];
+const VALUES = ['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
+const CARD_BACK_THEME = 0; // first theme in backgrounds_cards.png
+
+// ── Sprite geometry ──
+const FRONT_COLS = 13;
+const FRONT_ROWS = 6;
+const BACK_COLS = 10;
+const BACK_ROWS = 4;
+
+
+// ── Game State ──
+let cards = [];       // { id, suit, value, faceUp, stackIdx }
+let stacks = [];      // each stack is an array of card ids
+let moveCount = 0;
+let scoreValue = 0;
+let history = [];
+let gameOver = false;
+
+// ── DOM Refs ──
+const tableauEl = document.getElementById('tableau');
+const foundationsEl = document.getElementById('foundations');
+const movesEl = document.getElementById('moves');
+const scoreEl = document.getElementById('score');
+const winOverlay = document.getElementById('win-overlay');
+
+// ── Drag State ──
+let dragCards = [];
+let dragOffsetX = 0;
+let dragOffsetY = 0;
+let dragSourceStack = -1;
+let currentDropTarget = -1;
+let isDragging = false;
+
+// ── Double-tap State ──
+let lastTapTime = 0;
+let lastTapCardId = -1;
+let didDrag = false;
+
+// ── Init ──
+function init() {
+  tableauEl.innerHTML = '';
+  foundationsEl.innerHTML = '';
+  for (let i = 0; i < 7; i++) {
+    const s = document.createElement('div');
+    s.className = 'stack tableau-stack';
+    s.dataset.stack = i;
+    s.innerHTML = '<div class="stack-placeholder"></div>';
+    tableauEl.appendChild(s);
+  }
+  for (let i = 7; i < 11; i++) {
+    const s = document.createElement('div');
+    s.className = 'stack foundation-stack';
+    s.dataset.stack = i;
+    s.innerHTML = '<div class="stack-placeholder"></div>';
+    foundationsEl.appendChild(s);
+  }
+  newGame();
+}
+
+function newGame() {
+  winOverlay.classList.remove('show');
+  gameOver = false;
+  moveCount = 0;
+  scoreValue = 0;
+  history = [];
+  updateUI();
+
+  cards = [];
+  let id = 0;
+  for (let s = 0; s < 4; s++) {
+    for (let v = 0; v < 13; v++) {
+      cards.push({ id: id++, suit: s, value: v, faceUp: false, stackIdx: -1, color: SUITS[s].color });
+    }
+  }
+  // Shuffle an array of card ids, NOT the cards array itself.
+  // The rest of the code relies on cards[id] returning the card with that id,
+  // so reordering the cards array would scramble every lookup.
+  let deck = [];
+  for (let i = 0; i < cards.length; i++) deck.push(i);
+  shuffle(deck);
+
+  stacks = [[], [], [], [], [], [], [], [], [], [], []];
+
+  // Yukon deal
+  let cardIdx = 0;
+
+  // Stack 0: 1 card face-up
+  {
+    const c = cards[deck[cardIdx++]];
+    c.stackIdx = 0;
+    c.faceUp = true;
+    stacks[0].push(c.id);
+  }
+
+  // Stacks 1-6: i face-down cards + 5 face-up cards
+  for (let si = 1; si <= 6; si++) {
+    for (let j = 0; j < si + 5; j++) {
+      const c = cards[deck[cardIdx++]];
+      c.stackIdx = si;
+      stacks[si].push(c.id);
+      c.faceUp = j >= si;
+    }
+  }
+
+  renderAll();
+}
+
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+}
+
+// ── Rendering ──
+function renderAll() {
+  for (let si = 0; si < 11; si++) {
+    renderStack(si);
+  }
+  updateUI();
+}
+
+function renderStack(stackIdx) {
+  const stackEl = getStackElement(stackIdx);
+  stackEl.querySelectorAll('.card').forEach(el => el.remove());
+
+  const isFoundation = stackIdx >= 7;
+  const cardIds = stacks[stackIdx];
+  const overlap = getOverlap();
+
+  cardIds.forEach((cid, idx) => {
+    const c = cards[cid];
+    const el = document.createElement('div');
+    el.className = 'card ' + (c.faceUp ? 'face-up' : 'face-down');
+    el.dataset.cardId = cid;
+    el.dataset.stackIdx = stackIdx;
+    el.dataset.idx = idx;
+
+    if (c.faceUp) {
+      const col = c.value;
+      const row = SUITS[c.suit].row;
+      el.style.backgroundImage = `url(${document.getElementById('spr-fronts').src})`;
+      el.style.backgroundRepeat = 'no-repeat';
+      // Scale the whole sheet so one cell exactly fills the card box. Using
+      // calc() with the responsive --card-w/--card-h vars keeps it correct
+      // on resize instead of clipping the oversized source cell.
+      el.style.backgroundSize = `calc(var(--card-w) * ${FRONT_COLS}) calc(var(--card-h) * ${FRONT_ROWS})`;
+      el.style.backgroundPosition = `calc(var(--card-w) * ${col} * -1) calc(var(--card-h) * ${row} * -1)`;
+    } else {
+      el.style.backgroundImage = `url(${document.getElementById('spr-backs').src})`;
+      el.style.backgroundRepeat = 'no-repeat';
+      el.style.backgroundSize = `calc(var(--card-w) * ${BACK_COLS}) calc(var(--card-h) * ${BACK_ROWS})`;
+      el.style.backgroundPosition = `0px calc(var(--card-h) * ${CARD_BACK_THEME} * -1)`;
+    }
+
+    el.style.top = (isFoundation ? 0 : idx * overlap) + 'px';
+    el.style.left = '0px';
+    stackEl.appendChild(el);
+  });
+}
+
+function getOverlap() {
+  const w = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w'));
+  if (w <= 58) return 20;
+  if (w <= 70) return 24;
+  return 28;
+}
+
+function getStackElement(idx) {
+  if (idx < 7) return tableauEl.children[idx];
+  return foundationsEl.children[idx - 7];
+}
+
+function updateUI() {
+  movesEl.textContent = moveCount;
+  scoreEl.textContent = scoreValue;
+}
+
+// ── Card Movement Logic ──
+function canPlaceOnTableau(cardId, stackIdx) {
+  const stack = stacks[stackIdx];
+  if (stack.length === 0) {
+    return cards[cardId].value === 12; // Only Kings
+  }
+  const topCard = cards[stack[stack.length - 1]];
+  const placingCard = cards[cardId];
+  return topCard.value === placingCard.value + 1 && topCard.color !== placingCard.color;
+}
+
+function canPlaceOnFoundation(cardId, stackIdx) {
+  const stack = stacks[stackIdx];
+  const c = cards[cardId];
+  if (stack.length === 0) return c.value === 0; // Ace
+  const topCard = cards[stack[stack.length - 1]];
+  return c.suit === topCard.suit && c.value === topCard.value + 1;
+}
+
+function getDropTargets(cardId) {
+  const targets = [];
+  for (let i = 0; i < 7; i++) {
+    if (canPlaceOnTableau(cardId, i)) targets.push(i);
+  }
+  for (let i = 7; i < 11; i++) {
+    if (canPlaceOnFoundation(cardId, i)) targets.push(i);
+  }
+  return targets;
+}
+
+function moveCards(cardIds, fromStack, toStack) {
+  const scoreBefore = scoreValue;
+  const flippedId = [];
+
+  for (const cid of cardIds) {
+    const idx = stacks[fromStack].indexOf(cid);
+    stacks[fromStack].splice(idx, 1);
+    cards[cid].stackIdx = toStack;
+  }
+  stacks[toStack].push(...cardIds);
+
+  // Flip top of source
+  if (fromStack < 7 && stacks[fromStack].length > 0) {
+    const topId = stacks[fromStack][stacks[fromStack].length - 1];
+    if (!cards[topId].faceUp) {
+      cards[topId].faceUp = true;
+      flippedId.push(topId);
+      scoreValue += 25;
+    }
+  }
+
+  // Scoring
+  if (toStack >= 7 && fromStack < 7) scoreValue += 60;
+  else if (toStack < 7 && fromStack >= 7) scoreValue -= 75;
+
+  history.push({ cardIds: [...cardIds], fromStack, toStack, flippedId, scoreDelta: scoreValue - scoreBefore });
+  moveCount++;
+  updateUI();
+}
+
+function undo() {
+  if (history.length === 0 || gameOver) return;
+  const h = history.pop();
+
+  for (const cid of h.cardIds) {
+    const idx = stacks[h.toStack].indexOf(cid);
+    stacks[h.toStack].splice(idx, 1);
+    cards[cid].stackIdx = h.fromStack;
+  }
+  stacks[h.fromStack].push(...h.cardIds);
+
+  for (const fid of h.flippedId) {
+    cards[fid].faceUp = false;
+  }
+
+  moveCount--;
+  scoreValue -= h.scoreDelta;
+  if (scoreValue < 0) scoreValue = 0;
+  updateUI();
+  renderAll();
+}
+
+// ── Drag & Drop ──
+function getCardAtPoint(x, y) {
+  const els = document.elementsFromPoint(x, y);
+  for (const el of els) {
+    if (el.classList.contains('card') && el.classList.contains('face-up')) return el;
+  }
+  return null;
+}
+
+function onPointerDown(e) {
+  if (gameOver) return;
+  const cardEl = e.target.closest('.card.face-up');
+  if (!cardEl) return;
+
+  e.preventDefault();
+  cardEl.setPointerCapture(e.pointerId);
+
+  const cardId = parseInt(cardEl.dataset.cardId);
+  const stackIdx = parseInt(cardEl.dataset.stackIdx);
+  const cardIdx = parseInt(cardEl.dataset.idx);
+  const movingIds = stacks[stackIdx].slice(cardIdx);
+
+  const rect = cardEl.getBoundingClientRect();
+  dragOffsetX = e.clientX - rect.left;
+  dragOffsetY = e.clientY - rect.top;
+  dragCards = movingIds;
+  dragSourceStack = stackIdx;
+  isDragging = false;
+  didDrag = false;
+
+  const overlap = getOverlap();
+  movingIds.forEach((cid, i) => {
+    const el = document.querySelector(`.card[data-card-id="${cid}"]`);
+    if (el) {
+      el.style.zIndex = 10000 + i;
+      el.style.position = 'absolute';
+    }
+  });
+
+  const onMove = (ev) => {
+    ev.preventDefault();
+    if (!isDragging) {
+      isDragging = true;
+      didDrag = true;
+      dragCards.forEach(cid => {
+        const el = document.querySelector(`.card[data-card-id="${cid}"]`);
+        if (el) el.classList.add('dragging');
+      });
+    }
+
+    const overlap2 = getOverlap();
+    dragCards.forEach((cid, i) => {
+      const el = document.querySelector(`.card[data-card-id="${cid}"]`);
+      if (el) {
+        const stackEl = el.parentElement;
+        const sr = stackEl.getBoundingClientRect();
+        el.style.left = (ev.clientX - sr.left - dragOffsetX) + 'px';
+        el.style.top = (ev.clientY - sr.top - dragOffsetY + i * overlap2) + 'px';
+      }
+    });
+
+    clearHighlights();
+    if (dragCards.length > 0) {
+      const targets = getDropTargets(dragCards[0]);
+      currentDropTarget = -1;
+      for (const t of targets) {
+        const sEl = getStackElement(t);
+        const r = sEl.getBoundingClientRect();
+        // Cards are absolutely positioned and overflow the stack box, so the
+        // drop zone must extend to the bottom of the last (lowest) card.
+        const cardEls = sEl.querySelectorAll('.card');
+        const bottomY = cardEls.length
+          ? cardEls[cardEls.length - 1].getBoundingClientRect().bottom
+          : r.bottom;
+        if (ev.clientX >= r.left - 15 && ev.clientX <= r.right + 15 &&
+            ev.clientY >= r.top - 15 && ev.clientY <= bottomY + 30) {
+          currentDropTarget = t;
+          sEl.querySelector('.stack-placeholder')?.classList.add('highlight');
+          break;
+        }
+      }
+      if (currentDropTarget >= 0 && stacks[currentDropTarget].length > 0) {
+        const topId = stacks[currentDropTarget][stacks[currentDropTarget].length - 1];
+        const topEl = document.querySelector(`.card[data-card-id="${topId}"]`);
+        if (topEl) topEl.classList.add('highlight');
+      }
+    }
+  };
+
+  const onUp = (ev) => {
+    cardEl.releasePointerCapture(ev.pointerId);
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+
+    clearHighlights();
+
+    let dropped = false;
+    if (isDragging && currentDropTarget >= 0 && dragCards.length > 0) {
+      moveCards([...dragCards], dragSourceStack, currentDropTarget);
+      dropped = true;
+    }
+
+    dragCards.forEach(cid => {
+      const el = document.querySelector(`.card[data-card-id="${cid}"]`);
+      if (el) {
+        el.classList.remove('dragging');
+        el.style.zIndex = '';
+        el.style.position = '';
+      }
+    });
+
+    dragCards = [];
+    currentDropTarget = -1;
+
+    renderAll();
+
+    if (dropped) {
+      checkWin();
+      checkAutoComplete();
+    } else if (!didDrag) {
+      // Tap - handle double tap
+      handleTap(cardId);
+    }
+  };
+
+  document.addEventListener('pointermove', onMove);
+  document.addEventListener('pointerup', onUp);
+}
+
+function handleTap(cardId) {
+  const now = Date.now();
+  if (cardId === lastTapCardId && now - lastTapTime < 400) {
+    tryAutoPlace(cardId);
+    lastTapCardId = -1;
+  } else {
+    lastTapCardId = cardId;
+    lastTapTime = now;
+  }
+}
+
+function tryAutoPlace(cardId) {
+  const c = cards[cardId];
+  const fromStack = c.stackIdx;
+  if (stacks[fromStack][stacks[fromStack].length - 1] !== cardId) return;
+
+  // Try foundation first
+  for (let fi = 7; fi < 11; fi++) {
+    if (canPlaceOnFoundation(cardId, fi)) {
+      moveCards([cardId], fromStack, fi);
+      renderAll();
+      checkWin();
+      checkAutoComplete();
+      return;
+    }
+  }
+  // Try tableau
+  for (let ti = 0; ti < 7; ti++) {
+    if (ti === fromStack) continue;
+    if (canPlaceOnTableau(cardId, ti)) {
+      moveCards([cardId], fromStack, ti);
+      renderAll();
+      return;
+    }
+  }
+}
+
+function clearHighlights() {
+  document.querySelectorAll('.highlight').forEach(el => el.classList.remove('highlight'));
+}
+
+// ── Win Detection ──
+function checkWin() {
+  for (let fi = 7; fi < 11; fi++) {
+    if (stacks[fi].length !== 13) return;
+  }
+  gameOver = true;
+  document.getElementById('win-stats').textContent =
+    'Completed in ' + moveCount + ' moves with a score of ' + scoreValue + '!';
+  winOverlay.classList.add('show');
+}
+
+// ── Auto Complete ──
+function checkAutoComplete() {
+  for (let si = 0; si < 7; si++) {
+    const stack = stacks[si];
+    for (let i = 0; i < stack.length; i++) {
+      const c = cards[stack[i]];
+      if (!c.faceUp) return;
+      if (i > 0) {
+        const prev = cards[stack[i - 1]];
+        if (c.value !== prev.value - 1 || c.color === prev.color) return;
+      }
+    }
+  }
+}
+
+function autoComplete() {
+  if (gameOver) return;
+  let moved = false;
+  for (let si = 0; si < 7; si++) {
+    if (stacks[si].length === 0) continue;
+    const topId = stacks[si][stacks[si].length - 1];
+    for (let fi = 7; fi < 11; fi++) {
+      if (canPlaceOnFoundation(topId, fi)) {
+        moveCards([topId], si, fi);
+        moved = true;
+        break;
+      }
+    }
+  }
+  if (moved) {
+    renderAll();
+    setTimeout(autoComplete, 180);
+  } else {
+    checkWin();
+  }
+}
+
+function highlightCard(cardId) {
+  const el = document.querySelector(`.card[data-card-id="${cardId}"]`);
+  if (el) {
+    el.classList.add('highlight');
+    setTimeout(() => el.classList.remove('highlight'), 2000);
+  }
+}
+
+// ── Event Listeners ──
+tableauEl.addEventListener('pointerdown', onPointerDown);
+foundationsEl.addEventListener('pointerdown', onPointerDown);
+
+document.getElementById('btn-undo').addEventListener('click', undo);
+document.getElementById('btn-new').addEventListener('click', newGame);
+document.getElementById('btn-auto').addEventListener('click', () => {
+  autoComplete();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'z' || e.key === 'Z') undo();
+  if (e.key === 'n' || e.key === 'N') newGame();
+});
+
+document.addEventListener('contextmenu', e => e.preventDefault());
+
+// Wait for sprite sheets to load
+window.addEventListener('load', init);
+</script>
+</body>
+</html>
