@@ -214,8 +214,9 @@ body {
 <div id="header">
   <h1>Yukon Solitaire</h1>
   <div class="info">
-    <span>Moves: <strong id="moves">0</strong></span>
-    <span>Score: <strong id="score">0</strong></span>
+    <span>Won: <strong id="won">0</strong></span>
+    <span>Lost: <strong id="lost">0</strong></span>
+    <span>Win %: <strong id="winpct">0%</strong></span>
     <button class="btn" id="btn-undo" title="Undo (Z)">Undo</button>
     <button class="btn" id="btn-new" title="New Game (N)">New Game</button>
     <button class="btn" id="btn-auto" title="Auto Complete">Auto</button>
@@ -256,16 +257,38 @@ const BACK_ROWS = 4;
 // ── Game State ──
 let cards = [];       // { id, suit, value, faceUp, stackIdx }
 let stacks = [];      // each stack is an array of card ids
-let moveCount = 0;
-let scoreValue = 0;
 let history = [];
 let gameOver = false;
+
+// ── Win/Loss stats (persisted in a cookie) ──
+let gamesWon = 0;
+let gamesLost = 0;
+let gameActive = false;   // a deal is in progress
+let gameResolved = false; // current game already counted (win or loss)
+
+function readCookie(name) {
+  const m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+  return m ? decodeURIComponent(m[2]) : null;
+}
+function writeCookie(name, value) {
+  document.cookie = name + '=' + encodeURIComponent(value) +
+    '; path=/; max-age=31536000; SameSite=Lax';
+}
+function loadStats() {
+  gamesWon = parseInt(readCookie('yukon_won')) || 0;
+  gamesLost = parseInt(readCookie('yukon_lost')) || 0;
+}
+function saveStats() {
+  writeCookie('yukon_won', gamesWon);
+  writeCookie('yukon_lost', gamesLost);
+}
 
 // ── DOM Refs ──
 const tableauEl = document.getElementById('tableau');
 const foundationsEl = document.getElementById('foundations');
-const movesEl = document.getElementById('moves');
-const scoreEl = document.getElementById('score');
+const wonEl = document.getElementById('won');
+const lostEl = document.getElementById('lost');
+const winpctEl = document.getElementById('winpct');
 const winOverlay = document.getElementById('win-overlay');
 
 // ── Drag State ──
@@ -284,6 +307,7 @@ let selectedCardId = -1;   // top card of the currently selected pile
 
 // ── Init ──
 function init() {
+  loadStats();
   tableauEl.innerHTML = '';
   foundationsEl.innerHTML = '';
   for (let i = 0; i < 7; i++) {
@@ -304,12 +328,14 @@ function init() {
 }
 
 function newGame() {
+  // Abandoning an unresolved game counts as a loss.
+  if (gameActive && !gameResolved) registerLoss();
   winOverlay.classList.remove('show');
   gameOver = false;
-  moveCount = 0;
-  scoreValue = 0;
   history = [];
   selectedCardId = -1;
+  gameActive = true;
+  gameResolved = false;
   updateUI();
 
   cards = [];
@@ -420,8 +446,10 @@ function getStackElement(idx) {
 }
 
 function updateUI() {
-  movesEl.textContent = moveCount;
-  scoreEl.textContent = scoreValue;
+  wonEl.textContent = gamesWon;
+  lostEl.textContent = gamesLost;
+  const total = gamesWon + gamesLost;
+  winpctEl.textContent = (total === 0 ? 0 : Math.round(gamesWon / total * 100)) + '%';
 }
 
 // ── Card Movement Logic ──
@@ -455,7 +483,6 @@ function getDropTargets(cardId) {
 }
 
 function moveCards(cardIds, fromStack, toStack) {
-  const scoreBefore = scoreValue;
   const flippedId = [];
 
   for (const cid of cardIds) {
@@ -471,16 +498,10 @@ function moveCards(cardIds, fromStack, toStack) {
     if (!cards[topId].faceUp) {
       cards[topId].faceUp = true;
       flippedId.push(topId);
-      scoreValue += 25;
     }
   }
 
-  // Scoring
-  if (toStack >= 7 && fromStack < 7) scoreValue += 60;
-  else if (toStack < 7 && fromStack >= 7) scoreValue -= 75;
-
-  history.push({ cardIds: [...cardIds], fromStack, toStack, flippedId, scoreDelta: scoreValue - scoreBefore });
-  moveCount++;
+  history.push({ cardIds: [...cardIds], fromStack, toStack, flippedId });
   updateUI();
 }
 
@@ -500,9 +521,6 @@ function undo() {
     cards[fid].faceUp = false;
   }
 
-  moveCount--;
-  scoreValue -= h.scoreDelta;
-  if (scoreValue < 0) scoreValue = 0;
   updateUI();
   renderAll();
 }
@@ -753,14 +771,30 @@ function clearHighlights() {
   document.querySelectorAll('.highlight').forEach(el => el.classList.remove('highlight'));
 }
 
+// ── Win/Loss recording ──
+function registerWin() {
+  if (gameResolved) return;
+  gameResolved = true;
+  gamesWon++;
+  saveStats();
+  updateUI();
+}
+function registerLoss() {
+  if (gameResolved) return;
+  gameResolved = true;
+  gamesLost++;
+  saveStats();
+  updateUI();
+}
+
 // ── Win Detection ──
 function checkWin() {
   for (let fi = 7; fi < 11; fi++) {
     if (stacks[fi].length !== 13) return;
   }
   gameOver = true;
-  document.getElementById('win-stats').textContent =
-    'Completed in ' + moveCount + ' moves with a score of ' + scoreValue + '!';
+  registerWin();
+  document.getElementById('win-stats').textContent = 'You won this game!';
   winOverlay.classList.add('show');
 }
 
@@ -825,6 +859,14 @@ document.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('contextmenu', e => e.preventDefault());
+
+// Leaving an unresolved game (reload or close) counts as a loss.
+window.addEventListener('pagehide', () => {
+  if (gameActive && !gameResolved) registerLoss();
+});
+window.addEventListener('beforeunload', () => {
+  if (gameActive && !gameResolved) registerLoss();
+});
 
 // Wait for sprite sheets to load
 window.addEventListener('load', init);
