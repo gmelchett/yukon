@@ -140,6 +140,11 @@ body {
   z-index: 5;
 }
 
+.card.selected {
+  box-shadow: 0 0 0 3px #4dd0e1, 0 4px 12px rgba(0,0,0,0.35);
+  z-index: 6;
+}
+
 /* Win overlay */
 #win-overlay {
   display: none;
@@ -271,10 +276,11 @@ let dragSourceStack = -1;
 let currentDropTarget = -1;
 let isDragging = false;
 
-// ── Double-tap State ──
+// ── Tap/Click Selection State ──
 let lastTapTime = 0;
 let lastTapCardId = -1;
 let didDrag = false;
+let selectedCardId = -1;   // top card of the currently selected pile
 
 // ── Init ──
 function init() {
@@ -303,6 +309,7 @@ function newGame() {
   moveCount = 0;
   scoreValue = 0;
   history = [];
+  selectedCardId = -1;
   updateUI();
 
   cards = [];
@@ -358,6 +365,7 @@ function renderAll() {
     renderStack(si);
   }
   updateUI();
+  updateSelectionHighlight();
 }
 
 function renderStack(stackIdx) {
@@ -478,6 +486,7 @@ function moveCards(cardIds, fromStack, toStack) {
 
 function undo() {
   if (history.length === 0 || gameOver) return;
+  selectedCardId = -1;
   const h = history.pop();
 
   for (const cid of h.cardIds) {
@@ -510,43 +519,54 @@ function getCardAtPoint(x, y) {
 function onPointerDown(e) {
   if (gameOver) return;
   const cardEl = e.target.closest('.card.face-up');
-  if (!cardEl) return;
 
   e.preventDefault();
-  cardEl.setPointerCapture(e.pointerId);
+  const capturedEl = cardEl || e.target;
+  capturedEl.setPointerCapture(e.pointerId);
 
-  const cardId = parseInt(cardEl.dataset.cardId);
-  const stackIdx = parseInt(cardEl.dataset.stackIdx);
-  const cardIdx = parseInt(cardEl.dataset.idx);
-  const movingIds = stacks[stackIdx].slice(cardIdx);
-
-  const rect = cardEl.getBoundingClientRect();
-  dragOffsetX = e.clientX - rect.left;
-  dragOffsetY = e.clientY - rect.top;
-  dragCards = movingIds;
-  dragSourceStack = stackIdx;
+  const startX = e.clientX, startY = e.clientY;
   isDragging = false;
   didDrag = false;
+  dragCards = [];
+  currentDropTarget = -1;
 
-  const overlap = getOverlap();
-  movingIds.forEach((cid, i) => {
-    const el = document.querySelector(`.card[data-card-id="${cid}"]`);
-    if (el) {
-      el.style.zIndex = 10000 + i;
-      el.style.position = 'absolute';
-    }
-  });
+  if (cardEl) {
+    const cardId = parseInt(cardEl.dataset.cardId);
+    const stackIdx = parseInt(cardEl.dataset.stackIdx);
+    const cardIdx = parseInt(cardEl.dataset.idx);
+    const movingIds = stacks[stackIdx].slice(cardIdx);
+
+    const rect = cardEl.getBoundingClientRect();
+    dragOffsetX = e.clientX - rect.left;
+    dragOffsetY = e.clientY - rect.top;
+    dragCards = movingIds;
+    dragSourceStack = stackIdx;
+
+    const overlap = getOverlap();
+    movingIds.forEach((cid, i) => {
+      const el = document.querySelector(`.card[data-card-id="${cid}"]`);
+      if (el) {
+        el.style.zIndex = 10000 + i;
+        el.style.position = 'absolute';
+      }
+    });
+  }
 
   const onMove = (ev) => {
     ev.preventDefault();
-    if (!isDragging) {
+    if (!isDragging && dragCards.length > 0) {
+      // Small jitter shouldn't start a drag (so taps still register).
+      if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 6) return;
       isDragging = true;
       didDrag = true;
+      selectedCardId = -1;            // a drag supersedes a click selection
+      updateSelectionHighlight();
       dragCards.forEach(cid => {
         const el = document.querySelector(`.card[data-card-id="${cid}"]`);
         if (el) el.classList.add('dragging');
       });
     }
+    if (!isDragging) return;
 
     const overlap2 = getOverlap();
     dragCards.forEach((cid, i) => {
@@ -566,8 +586,6 @@ function onPointerDown(e) {
       for (const t of targets) {
         const sEl = getStackElement(t);
         const r = sEl.getBoundingClientRect();
-        // Cards are absolutely positioned and overflow the stack box, so the
-        // drop zone must extend to the bottom of the last (lowest) card.
         const cardEls = sEl.querySelectorAll('.card');
         const bottomY = cardEls.length
           ? cardEls[cardEls.length - 1].getBoundingClientRect().bottom
@@ -588,7 +606,7 @@ function onPointerDown(e) {
   };
 
   const onUp = (ev) => {
-    cardEl.releasePointerCapture(ev.pointerId);
+    capturedEl.releasePointerCapture(ev.pointerId);
     document.removeEventListener('pointermove', onMove);
     document.removeEventListener('pointerup', onUp);
 
@@ -598,6 +616,11 @@ function onPointerDown(e) {
     if (isDragging && currentDropTarget >= 0 && dragCards.length > 0) {
       moveCards([...dragCards], dragSourceStack, currentDropTarget);
       dropped = true;
+      selectedCardId = -1;
+      updateSelectionHighlight();
+    } else if (!didDrag) {
+      const t = pickTarget(ev.clientX, ev.clientY);
+      if (t.stackIdx >= 0) handleTap(t.cardId, t.stackIdx);
     }
 
     dragCards.forEach(cid => {
@@ -617,9 +640,6 @@ function onPointerDown(e) {
     if (dropped) {
       checkWin();
       checkAutoComplete();
-    } else if (!didDrag) {
-      // Tap - handle double tap
-      handleTap(cardId);
     }
   };
 
@@ -627,41 +647,106 @@ function onPointerDown(e) {
   document.addEventListener('pointerup', onUp);
 }
 
-function handleTap(cardId) {
+function handleTap(cardId, stackIdx) {
   const now = Date.now();
-  if (cardId === lastTapCardId && now - lastTapTime < 400) {
-    tryAutoPlace(cardId);
+
+  // Double click → send the card to a foundation ("final") stack.
+  if (cardId !== -1 && cardId === lastTapCardId && now - lastTapTime < 400) {
     lastTapCardId = -1;
+    const moved = tryAutoPlace(cardId);
+    if (!moved) selectedCardId = cardId;   // keep it selected if it can't go
+    updateSelectionHighlight();
+    return;
+  }
+  lastTapTime = now;
+  lastTapCardId = cardId;
+
+  // No current selection → select this card (and the pile on top of it).
+  if (selectedCardId === -1) {
+    if (cardId !== -1) {
+      selectedCardId = cardId;
+      updateSelectionHighlight();
+    }
+    return;
+  }
+
+  // Clicking the already-selected card again → deselect.
+  if (cardId !== -1 && cardId === selectedCardId) {
+    selectedCardId = -1;
+    updateSelectionHighlight();
+    return;
+  }
+
+  // Move the selected pile onto the clicked stack.
+  const fromStack = cards[selectedCardId].stackIdx;
+  const idx = stacks[fromStack].indexOf(selectedCardId);
+  const movingIds = stacks[fromStack].slice(idx);
+  if (movePileToStack(movingIds, fromStack, stackIdx)) {
+    selectedCardId = -1;
+    updateSelectionHighlight();
   } else {
-    lastTapCardId = cardId;
-    lastTapTime = now;
+    // Invalid move → select the newly clicked card instead (clear on empty).
+    selectedCardId = cardId !== -1 ? cardId : -1;
+    updateSelectionHighlight();
   }
 }
 
 function tryAutoPlace(cardId) {
   const c = cards[cardId];
   const fromStack = c.stackIdx;
-  if (stacks[fromStack][stacks[fromStack].length - 1] !== cardId) return;
-
-  // Try foundation first
+  if (stacks[fromStack][stacks[fromStack].length - 1] !== cardId) return false;
   for (let fi = 7; fi < 11; fi++) {
     if (canPlaceOnFoundation(cardId, fi)) {
       moveCards([cardId], fromStack, fi);
       renderAll();
       checkWin();
       checkAutoComplete();
-      return;
+      return true;
     }
   }
-  // Try tableau
-  for (let ti = 0; ti < 7; ti++) {
-    if (ti === fromStack) continue;
-    if (canPlaceOnTableau(cardId, ti)) {
-      moveCards([cardId], fromStack, ti);
-      renderAll();
-      return;
+  return false;
+}
+
+function movePileToStack(movingIds, fromStack, toStack) {
+  if (toStack < 0 || fromStack === toStack || movingIds.length === 0) return false;
+  if (toStack >= 7) {
+    // Foundation stacks accept only a single card, in suit order.
+    if (movingIds.length !== 1) return false;
+    if (!canPlaceOnFoundation(movingIds[0], toStack)) return false;
+  } else {
+    if (!canPlaceOnTableau(movingIds[0], toStack)) return false;
+  }
+  moveCards([...movingIds], fromStack, toStack);
+  renderAll();
+  checkWin();
+  checkAutoComplete();
+  return true;
+}
+
+function pickTarget(x, y) {
+  const els = document.elementsFromPoint(x, y);
+  for (const el of els) {
+    if (el.classList.contains('card') && el.classList.contains('face-up')) {
+      return { cardId: parseInt(el.dataset.cardId), stackIdx: parseInt(el.dataset.stackIdx) };
     }
   }
+  for (const el of els) {
+    if (el.classList.contains('stack')) {
+      return { cardId: -1, stackIdx: parseInt(el.dataset.stack) };
+    }
+  }
+  return { cardId: -1, stackIdx: -1 };
+}
+
+function updateSelectionHighlight() {
+  document.querySelectorAll('.card.selected').forEach(el => el.classList.remove('selected'));
+  if (selectedCardId === -1) return;
+  const st = cards[selectedCardId].stackIdx;
+  const idx = stacks[st].indexOf(selectedCardId);
+  stacks[st].slice(idx).forEach(cid => {
+    const el = document.querySelector(`.card[data-card-id="${cid}"]`);
+    if (el) el.classList.add('selected');
+  });
 }
 
 function clearHighlights() {
