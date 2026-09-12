@@ -116,7 +116,6 @@ body {
   background-size: var(--sprite-w) var(--sprite-h);
   image-rendering: auto;
   transition: transform 0.1s ease-out, box-shadow 0.1s ease-out;
-  will-change: transform;
   z-index: 1;
   overflow: hidden;
 }
@@ -133,6 +132,7 @@ body {
   z-index: 10000 !important;
   box-shadow: 0 10px 30px rgba(0,0,0,0.5);
   transition: none;
+  will-change: transform;
 }
 
 .card.highlight {
@@ -267,12 +267,21 @@ let gameActive = false;   // a deal is in progress
 let gameResolved = false; // current game already counted (win or loss)
 
 function readCookie(name) {
-  const m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
-  return m ? decodeURIComponent(m[2]) : null;
+  try {
+    const m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+    return m ? decodeURIComponent(m[2]) : null;
+  } catch (e) {
+    return null; // cookies may be unavailable (e.g. opened via file://)
+  }
 }
 function writeCookie(name, value) {
-  document.cookie = name + '=' + encodeURIComponent(value) +
-    '; path=/; max-age=31536000; SameSite=Lax';
+  try {
+    document.cookie = name + '=' + encodeURIComponent(value) +
+      '; path=/; max-age=31536000; SameSite=Lax';
+  } catch (e) {
+    // Cookies unavailable (e.g. file:// with cookies disabled) — stats stay
+    // in-memory for this session only.
+  }
 }
 function loadStats() {
   gamesWon = parseInt(readCookie('yukon_won')) || 0;
@@ -793,9 +802,9 @@ function checkWin() {
     if (stacks[fi].length !== 13) return;
   }
   gameOver = true;
-  registerWin();
   document.getElementById('win-stats').textContent = 'You won this game!';
   winOverlay.classList.add('show');
+  registerWin();
 }
 
 // ── Auto Complete ──
