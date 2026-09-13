@@ -304,6 +304,7 @@ function saveStats() {
 // ── DOM Refs ──
 const tableauEl = document.getElementById('tableau');
 const foundationsEl = document.getElementById('foundations');
+const gameEl = document.getElementById('game');
 const wonEl = document.getElementById('won');
 const lostEl = document.getElementById('lost');
 const winpctEl = document.getElementById('winpct');
@@ -322,6 +323,9 @@ let lastTapTime = 0;
 let lastTapCardId = -1;
 let didDrag = false;
 let selectedCardId = -1;   // top card of the currently selected pile
+// Per-stack vertical fan spacing (px). Computed per render so tall stacks
+// shrink their gap to stay on screen instead of overflowing the bottom.
+const stackOverlap = new Array(11).fill(0);
 
 // ── Init ──
 function init() {
@@ -418,7 +422,10 @@ function renderStack(stackIdx) {
 
   const isFoundation = stackIdx >= 7;
   const cardIds = stacks[stackIdx];
-  const overlap = getOverlap();
+  // Foundations stack cards at top:0 (only the top card is ever visible),
+  // so only tableau stacks need a dynamic fan that avoids overflow.
+  const overlap = isFoundation ? 0 : computeOverlap(stackEl, cardIds.length);
+  stackOverlap[stackIdx] = overlap;
 
   cardIds.forEach((cid, idx) => {
     const c = cards[cid];
@@ -456,6 +463,43 @@ function getOverlap() {
   if (w <= 58) return 20;
   if (w <= 70) return 24;
   return 28;
+}
+
+// Default fan spacing for a stack, reduced if the stack is so tall that its
+// last card would fall past the bottom of the *visible* viewport. `stackEl`
+// is the .stack container (its position is unaffected by the absolutely
+// positioned cards inside it, so its bounding rect is stable during layout).
+//
+// getBoundingClientRect() returns coordinates relative to the visual viewport
+// (it already accounts for the address bar), so the space below the stack is
+// simply visualViewport.height - stackRect.top. We also clamp to the #game
+// element's own height as a safety net, in case the game board extends past
+// the visible area. (Compensating with visualViewport.offsetTop would
+// double-count the offset and make stacks look like they fit.)
+function computeOverlap(stackEl, count) {
+  const base = getOverlap();
+  if (count <= 1) return base;
+  const cardH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-h')) || 100;
+  const bottomMargin = 8; // breathing room above the very bottom edge
+
+  const stackRect = stackEl.getBoundingClientRect();
+  const vv = window.visualViewport;
+  const vh = vv ? vv.height : window.innerHeight;
+  // Distance from the top of the stack to the bottom of the visible viewport.
+  let avail = vh - stackRect.top - bottomMargin;
+  // Safety net: never exceed the actual game board height either.
+  if (gameEl) {
+    const gameRect = gameEl.getBoundingClientRect();
+    const stackTopInGame = stackRect.top - gameRect.top;
+    avail = Math.min(avail, gameRect.height - stackTopInGame - bottomMargin);
+  }
+
+  // Largest gap that lets the last card's bottom fit within the available height.
+  const maxOverlap = (avail - cardH) / (count - 1);
+  // Floor only keeps cards from fully collapsing; the priority is that every
+  // card stays on screen, even if the fan gets cramped on very tall stacks.
+  const minOverlap = 6;
+  return Math.max(minOverlap, Math.min(base, maxOverlap));
 }
 
 function getStackElement(idx) {
@@ -578,7 +622,6 @@ function onPointerDown(e) {
     dragCards = movingIds;
     dragSourceStack = stackIdx;
 
-    const overlap = getOverlap();
     movingIds.forEach((cid, i) => {
       const el = document.querySelector(`.card[data-card-id="${cid}"]`);
       if (el) {
@@ -604,7 +647,7 @@ function onPointerDown(e) {
     }
     if (!isDragging) return;
 
-    const overlap2 = getOverlap();
+    const overlap2 = stackOverlap[dragSourceStack] || getOverlap();
     dragCards.forEach((cid, i) => {
       const el = document.querySelector(`.card[data-card-id="${cid}"]`);
       if (el) {
@@ -893,6 +936,21 @@ document.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('contextmenu', e => e.preventDefault());
+
+// Recompute the dynamic card spacing when the viewport size changes
+// (orientation change, browser chrome show/hide, keyboard, etc.).
+let resizeTimer = null;
+function scheduleRerender() {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (gameActive) renderAll(); }, 120);
+}
+window.addEventListener('resize', scheduleRerender);
+// Firefox/Android address-bar show/hide changes the visual viewport height
+// without firing a window resize, so listen to it directly.
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', scheduleRerender);
+  window.visualViewport.addEventListener('scroll', scheduleRerender);
+}
 
 // Leaving an unresolved game (reload or close) counts as a loss.
 window.addEventListener('pagehide', () => {
