@@ -2,10 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Yukon Solitaire</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html {
+  /* Disable Firefox for Android pull-to-refresh / swipe-to-reload */
+  overscroll-behavior-y: none;
+}
 
 body {
   background: #1a6b3c;
@@ -14,6 +19,10 @@ body {
   overflow-x: hidden;
   user-select: none;
   -webkit-user-select: none;
+  /* Stop the browser from hijacking touch gestures for scroll/zoom,
+     so the game's own pointer/drag handling gets the touches */
+  overscroll-behavior-y: none;
+  touch-action: none;
 }
 
 /* Sprite sheets loaded as images, used via background-position */
