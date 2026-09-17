@@ -233,9 +233,9 @@ body {
     <span>Won: <strong id="won">0</strong></span>
     <span>Lost: <strong id="lost">0</strong></span>
     <span>Win %: <strong id="winpct">0%</strong></span>
-    <button class="btn" id="btn-undo" title="Undo (Z)">Undo</button>
     <button class="btn" id="btn-new" title="New Game (N)">New Game</button>
-    <button class="btn" id="btn-auto" title="Auto Complete">Auto</button>
+    <button class="btn" id="btn-undo" title="Undo (Z)">Undo</button>
+    <button class="btn" id="btn-auto" title="Auto Complete">Auto Complete</button>
   </div>
 </div>
 
@@ -308,6 +308,87 @@ function saveStats() {
   writeCookie('yukon_lost', gamesLost);
 }
 
+// ── Game State Persistence (saved after each move, restored on revisit) ──
+const GAME_COOKIE = 'yukon_game';
+const HIST_COOKIE = 'yukon_hist';
+
+function clearCookie(name) {
+  try {
+    document.cookie = name + '=; path=/; max-age=0; SameSite=Lax';
+  } catch (e) { /* cookies unavailable */ }
+}
+
+function saveGame() {
+  if (!gameActive) return;
+  try {
+    const state = {
+      v: 1,
+      // Per-card face-up flags (stack membership/order is rebuilt from stacks).
+      up: cards.map(c => (c.faceUp ? 1 : 0)),
+      // Stacks as ordered arrays of card ids.
+      st: stacks.map(s => s.slice()),
+      over: gameOver ? 1 : 0,
+      res: gameResolved ? 1 : 0
+    };
+    writeCookie(GAME_COOKIE, JSON.stringify(state));
+    // Undo history is bulky; store it separately so a too-large history can
+    // never prevent the core game state from persisting in yukon_game.
+    writeCookie(HIST_COOKIE, JSON.stringify({ h: history.slice(-500) }));
+  } catch (e) {
+    // Persistence is best-effort; a failure must never break play.
+  }
+}
+
+function loadGame() {
+  const raw = readCookie(GAME_COOKIE);
+  if (!raw) return false;
+  try {
+    const state = JSON.parse(raw);
+    if (!state || state.v !== 1 || !Array.isArray(state.st) || !Array.isArray(state.up)) return false;
+
+    // A finished (won) game is already counted — don't restore it, deal fresh.
+    if (state.res) { clearCookie(GAME_COOKIE); return false; }
+
+    cards = [];
+    for (let i = 0; i < 52; i++) {
+      const suit = Math.floor(i / 13);
+      const value = i % 13;
+      cards.push({
+        id: i, suit, value, color: SUITS[suit].color,
+        faceUp: !!state.up[i], stackIdx: -1
+      });
+    }
+    stacks = [[], [], [], [], [], [], [], [], [], [], []];
+    state.st.forEach((s, si) => {
+      if (!Array.isArray(s)) return;
+      s.forEach(cid => {
+        if (cid < 0 || cid > 51) return;
+        stacks[si].push(cid);
+        cards[cid].stackIdx = si;
+      });
+    });
+
+    gameOver = false;
+    gameResolved = false;
+    gameActive = true;
+    selectedCardId = -1;
+    history = [];
+    const hraw = readCookie(HIST_COOKIE);
+    if (hraw) {
+      try {
+        const h = JSON.parse(hraw);
+        if (h && Array.isArray(h.h)) history = h.h;
+      } catch (e) { /* ignore */ }
+    }
+
+    updateUI();
+    renderAll();
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 // ── DOM Refs ──
 const tableauEl = document.getElementById('tableau');
 const foundationsEl = document.getElementById('foundations');
@@ -353,7 +434,10 @@ function init() {
     s.innerHTML = '<div class="stack-placeholder"></div>';
     foundationsEl.appendChild(s);
   }
-  newGame();
+  // Restore a saved game if one exists; otherwise deal a new one.
+  if (!loadGame()) {
+    newGame();
+  }
 }
 
 function newGame() {
@@ -405,6 +489,7 @@ function newGame() {
   }
 
   renderAll();
+  saveGame();
 }
 
 function shuffle(arr) {
@@ -572,6 +657,7 @@ function moveCards(cardIds, fromStack, toStack) {
 
   history.push({ cardIds: [...cardIds], fromStack, toStack, flippedId });
   updateUI();
+  saveGame();
 }
 
 function undo() {
@@ -592,6 +678,7 @@ function undo() {
 
   updateUI();
   renderAll();
+  saveGame();
 }
 
 // ── Drag & Drop ──
@@ -870,6 +957,7 @@ function checkWin() {
   document.getElementById('win-stats').textContent = 'You won this game!';
   winOverlay.classList.add('show');
   registerWin();
+  saveGame();
 }
 
 // ── Auto Complete ──
@@ -959,12 +1047,13 @@ if (window.visualViewport) {
   window.visualViewport.addEventListener('scroll', scheduleRerender);
 }
 
-// Leaving an unresolved game (reload or close) counts as a loss.
+// Save on leave so an in-progress game is restored on the next visit instead
+// of being counted as a loss.
 window.addEventListener('pagehide', () => {
-  if (gameActive && !gameResolved) registerLoss();
+  saveGame();
 });
 window.addEventListener('beforeunload', () => {
-  if (gameActive && !gameResolved) registerLoss();
+  saveGame();
 });
 
 // Wait for sprite sheets to load
